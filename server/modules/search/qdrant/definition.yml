@@ -1,0 +1,24 @@
+key: qdrant
+title: co:here& qdrant Search
+description: AI-Powered cloud sematic search service.
+author: holloway.ai
+logo: https://static.requarks.io/logo/wikijs-butterfly.svg
+website: https://joan.holloway.ai/
+isAvailable: true
+props:
+  qdrantHostName:
+    type: String
+    title: qdrant Host Name
+    hint: Name of your cluster on https://cloud.qdrant.io/
+    order: 1
+  qdrantApiKey:
+    type: String
+    title: qdrant API Key
+    hint: Either API Key.
+    order: 2
+  cohereApiKey:
+    type: String
+    title: Cohere API Key
+    hint: Co:here API Key https://dashboard.cohere.ai/api-keys
+    default: wiki
+    order: 3
