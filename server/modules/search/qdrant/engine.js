@@ -1,18 +1,22 @@
-
 const _ = require('lodash')
-const stream = require('stream')
-const Promise = require('bluebird')
-const pipeline = Promise.promisify(stream.pipeline)
-const { v4: uuidv4 } = require('uuid')
-const cheerio = require('cheerio')
+// const stream = require('stream')
+// const Promise = require('bluebird')
+// const pipeline = Promise.promisify(stream.pipeline)
 
 const { Qdrant } = require('./qdrantapi')
 const cohere = require('cohere-ai')
 
+const {
+  getFullTextConfig,
+  generateVectors,
+  generateDataPoints,
+  extractTextsFromPage,
+} = require('./utils');
+
 /* global WIKI */
-const COLLECTION_NAME = 'test_collection'
-const NUMBER_OF_RESULTS = 10 // number of results
-const HNSW_EF_VALUE = 128
+const COLLECTION_NAME = 'test_collection';
+const NUMBER_OF_RESULTS = 7;
+const HNSW_EF_VALUE = 128;
 
 const schema = {
   name: COLLECTION_NAME,
@@ -21,74 +25,6 @@ const schema = {
     distance: 'Dot'
   }
 }
-
-function getFullTextConfing(fieldName) {
-  return {
-    field_name: fieldName,
-    field_schema: {
-      type: 'text',
-      tokenizer: 'prefix',
-      min_token_len: 2,
-      max_token_len: 20,
-      lowercase: true
-    }
-  }
-}
-
-async function generateVectors(texts) {
-  const { body: { embeddings: textsVectors } } = await cohere.embed({
-    texts,
-    model: 'multilingual-22-12'
-  })
-  return textsVectors
-};
-
-function generateDataPoints(texts, textsVectors) {
-  const dataPoints = texts.map((text, idx) => ({
-    id: uuidv4(),
-    payload: text,
-    vector: textsVectors[idx]
-  }))
-  return dataPoints
-};
-
-function extractTextsFromPage(pageData) {
-  const $ = cheerio.load(pageData.content)
-
-  const headersAndParagraphs = $('h1, h2, h3, p').map(function (i, el) {
-    const text = $(this).text().replace(/\n/g, '').trim().replace(/ +/g, ' ')
-    return {
-      elementId: el.attribs.id,
-      elementType: el.tagName,
-      elementContent: text
-    }
-  }).get()
-
-  const texts = headersAndParagraphs.reduce((acc, curr) => {
-    if (['h1', 'h2', 'h3'].includes(curr.elementType)) {
-      return { currentHeader: curr.elementContent, currentHeaderId: curr.elementId, arr: [...acc.arr] }
-    } else {
-      return {
-        ...acc,
-        arr: [...acc.arr, {
-          pid: curr.elementId, // warning: this required the paragraphs in the html to have an id
-          headerText: acc.currentHeader,
-          headerUrl: acc.currentHeaderId,
-          content: curr.elementContent,
-          pageTitle: pageData.title,
-          pageUrl: pageData.path
-        }]
-      }
-    };
-  }, { currentHeader: null, arr: [] }).arr
-
-  texts.push({
-    pageTitle: pageData.title,
-    pageUrl: pageData.path
-  })
-
-  return texts
-};
 
 module.exports = {
   async activate() {
@@ -145,7 +81,7 @@ module.exports = {
       let vectorResult = await this.client.searchCollection(
         COLLECTION_NAME,
         queryVector[0],
-        7,
+        NUMBER_OF_RESULTS,
         HNSW_EF_VALUE
       )
       if (vectorResult.err) {
@@ -175,21 +111,21 @@ module.exports = {
       return {
         results: results.map(result => {
           const {
-            pid,
-            // headerText,
-            headerUrl,
+            id,
+            // type,
             content,
-            pageUrl,
-            pageTitle
+            // headerContent,
+            // headerId,
+            pageTitle,
+            pageUrl
           } = result.payload
-          console.log(result.payload)
 
-          if (content) { // if there is not content then 'result' is not a pragraph but a title
+          if (content) { // if there is not content then 'result' is just the title
             return {
-              id: `${pageUrl}_${pid}`,
+              id: `${pageUrl}_${id}`,
               title: pageTitle,
               description: content,
-              path: `${pageUrl}?pid=${pid}#${headerUrl}`,
+              path: `${pageUrl}#${id}`, // query string is for the highlighting animation, hash is for scrolling to the element on page load.
               locale: 'en'
             }
           } else {
@@ -227,39 +163,11 @@ module.exports = {
         })
         .returning('*')
 
-      const pages = pagesRaw.map(page => {
-        // console.log('page: ', page);
-        const { render, ...remainingProps } = page
-        const pageContent = extractTextsFromPage({ content: render })
-        // console.log('pageContent', pageContent);
-        const pageContentWithTitleProps = pageContent.map(pageElement => {
-          const { content, headerUrl, headerText } = pageElement
-          return {
-            ...content ? pageElement : {},
-            ...content ? { headerUrl: headerUrl } : {},
-            ...content ? { headerText: headerText.replace('\u00b6', '').trim() } : {},
-            pageTitle: remainingProps.title,
-            pageUrl: remainingProps.path
-          }
-        })
-
-        return pageContentWithTitleProps
-      })
-
-      const pageContents = pages.flat().map(pageElement => ({
-        ...pageElement.content ? { content: pageElement.content } : { pageTitle: pageElement.pageTitle }
-      }))
-
-      const pageContentsVectors = await generateVectors(pageContents.map(contentItem => {
-        if (contentItem.content) {
-          return contentItem.content
-        } else {
-          return contentItem.pageTitle
-        };
-      }))
-
-      const dataPoints = generateDataPoints(pages.flat(), pageContentsVectors)
-      console.log(dataPoints)
+      const pagesElements = pagesRaw.map(page => extractTextsFromPage(page)); // complete data for every indexable element in a page
+      const pagesContents = pagesElements.flat().map(p => p.content ? p.content : p.pageTitle); // only the texts
+      const vectors = await generateVectors(pagesContents);
+      const dataPoints = generateDataPoints(pagesElements.flat(), vectors);
+      console.log('data points', dataPoints);
 
       // delete collection in qdrant db
       const deleteResult = await this.client.deleteCollection(COLLECTION_NAME)
@@ -277,13 +185,13 @@ module.exports = {
         throw new Error(`ERROR:  Couldn't create collection "${COLLECTION_NAME}"!`)
       }
 
-      createResult = await this.client.indexCollection(COLLECTION_NAME, getFullTextConfing('content'))
+      createResult = await this.client.indexCollection(COLLECTION_NAME, getFullTextConfig('content'))
       if (createResult.err) {
         throw new Error(`ERROR:  Couldn't create text index for content!`)
       }
-      createResult = await this.client.indexCollection(COLLECTION_NAME, getFullTextConfing('headerText'))
+      createResult = await this.client.indexCollection(COLLECTION_NAME, getFullTextConfig('pageTitle'))
       if (createResult.err) {
-        throw new Error(`ERROR:  Couldn't create text index for headerText!`)
+        throw new Error(`ERROR:  Couldn't create text index for pageTitle!`)
       }
       console.log(`Success! Collection "${COLLECTION_NAME} created!"`)
 
