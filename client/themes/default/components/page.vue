@@ -493,14 +493,13 @@ export default {
   },
   data() {
     return {
-      route: window.location,
       navShown: false,
       navExpanded: false,
       upBtnShown: false,
       pageEditFab: false,
       scrollOpts: {
         duration: 1150,
-        offset: 0,
+        offset: 50,
         easing: 'easeInOutCubic'
       },
       scrollStyle: {
@@ -602,7 +601,14 @@ export default {
 
     this.$store.set('page/mode', 'view')
   },
+  watch: {
+    hash(o, n) {
+      console.log(o);
+      console.log(n);
+    }
+  },
   mounted () {
+
     if (this.$vuetify.theme.dark) {
       this.scrollStyle.bar.background = '#424242'
     }
@@ -626,14 +632,16 @@ export default {
     if (window.location.hash && window.location.hash.length > 1) {
       if (document.readyState === 'complete') {
         this.$nextTick(() => {
-          this.$vuetify.goTo(decodeURIComponent(window.location.hash), this.scrollOpts)
+          this.navigateToResult();
         })
       } else {
         window.addEventListener('load', () => {
-          this.$vuetify.goTo(decodeURIComponent(window.location.hash), this.scrollOpts)
+          this.navigateToResult();
+          window.addEventListener('hashchange', () => this.navigateToResult())
         })
       }
     }
+
 
     // -> Handle anchor links within the page contents
     this.$nextTick(() => {
@@ -647,24 +655,9 @@ export default {
 
       window.boot.notify('page-ready')
     })
-
-
   },
-  watch: {
-    upBtnShown(_, newValue) {
-      if (newValue) {
-        const paragraphs = Array.from(document.querySelectorAll('.text-container p'));
-        const location = String(window.location);
-        const pid = location.substring(location.indexOf('=') + 1, location.indexOf('#'));
-        paragraphs.forEach(p => {
-          if (p.id === pid) {
-            Array.from(p.children).forEach(child => child.classList.add('highlighted-on-select'))
-          } else {
-            Array.from(p.children).forEach(child => child.classList.remove('highlighted-on-select'))
-          };
-        })
-      };
-    }
+  beforeUnmount() {
+    window.removeEventListener('hashchange', () => this.navigateToResult())
   },
   methods: {
     goHome () {
@@ -722,6 +715,19 @@ export default {
       if (focusNewComment) {
         document.querySelector('#discussion-new').focus()
       }
+    },
+    navigateToResult () {
+      const elements = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, .content'));
+      const location = String(window.location);
+      const searchResultId = location.substring(location.indexOf('#') + 1);
+      elements.forEach(element => {
+        if (element.id === searchResultId) {
+          element.classList.add('highlighted-on-select')
+        } else {
+          element.classList.remove('highlighted-on-select')
+        };
+      })
+      this.$vuetify.goTo(decodeURIComponent(window.location.hash), this.scrollOpts)
     }
   }
 }

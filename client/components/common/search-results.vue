@@ -57,6 +57,7 @@
 <script>
 import _ from 'lodash'
 import { sync } from 'vuex-pathify'
+import { getHash } from '../../helpers/utils'
 import { OrbitSpinner } from 'epic-spinners'
 
 import searchPagesQuery from 'gql/common/common-pages-query-search.gql'
@@ -70,6 +71,11 @@ export default {
       cursor: 0,
       pagination: 1,
       perPage: 10,
+      scrollOpts: {
+        duration: 1150,
+        offset: 50,
+        easing: 'easeInOutCubic'
+      },
       response: {
         results: [],
         suggestions: [],
@@ -136,10 +142,23 @@ export default {
       this.search = term
     },
     goToPage(item) {
+      this.handleSamePageResult(item.path)
       window.location.assign(`/${item.locale}/${item.path}`)
     },
     goToPageInNewTab(item) {
       window.open(`/${item.locale}/${item.path}`, '_blank')
+    },
+    handleSamePageResult(resultPath) {
+      const resultHash = getHash(resultPath);
+      const currentPageHash = getHash(String(window.location));
+      if (resultHash === currentPageHash) {
+        const element = document.getElementById(resultHash);
+        element.classList.remove('highlighted-on-select')
+        setTimeout(() => {
+          element.classList.add('highlighted-on-select')
+          this.$vuetify.goTo(decodeURIComponent(window.location.hash, this.scrollOpts))
+        }, 300)
+      };
     }
   },
   apollo: {
